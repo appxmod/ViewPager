@@ -122,14 +122,17 @@ public class ViewPager extends ViewGroup {
     static final int[] LAYOUT_ATTRS = new int[] {
         android.R.attr.layout_gravity
     };
-
-    /**
+    /** 0=skip none; 1=skip scroll; 2=skip scroll and animation; */
+	public int skipScroll;
+	
+	/**
      * Used to track what the expected number of items in the adapter should be.
      * If the app changes this when we don't expect it, we'll throw a big obnoxious exception.
      */
     private int mExpectedAdapterCount;
-
-    static class ItemInfo {
+	private int itemBeforeAnimation;
+	
+	static class ItemInfo {
         Object object;
         int position;
         boolean scrolling;
@@ -196,10 +199,10 @@ public class ViewPager extends ViewGroup {
     /**
      * Position of the last motion event.
      */
-    private float mLastMotionX;
-    private float mLastMotionY;
-    private float mInitialMotionX;
-    private float mInitialMotionY;
+    public float mLastMotionX;
+	public float mLastMotionY;
+	public float mInitialMotionX;
+	public float mInitialMotionY;
     /**
      * ID of the active pointer. This is used to retain consistency during
      * drags/flings if multiple pointers are used.
@@ -214,7 +217,7 @@ public class ViewPager extends ViewGroup {
     /**
      * Determines speed during touch scrolling
      */
-    private VelocityTracker mVelocityTracker;
+    public VelocityTracker mVelocityTracker;
     private int mMinimumVelocity;
     private int mMaximumVelocity;
     private int mFlingDistance;
@@ -473,6 +476,10 @@ public class ViewPager extends ViewGroup {
                     }
                 });
     }
+    
+    public boolean isSmoothScrolling(){
+    	return (mScroller != null) && !mScroller.isFinished();
+	}
 
     @Override
     protected void onDetachedFromWindow() {
@@ -666,6 +673,7 @@ public class ViewPager extends ViewGroup {
             }
             requestLayout();
         } else {
+        	if(smoothScroll) itemBeforeAnimation=mCurItem;
             populate(item);
             scrollToItem(item, smoothScroll, velocity, dispatchSelected);
         }
@@ -680,7 +688,7 @@ public class ViewPager extends ViewGroup {
             destX = (int) (width * Math.max(mFirstOffset,
                     Math.min(curInfo.offset, mLastOffset)));
         }
-        if (smoothScroll) {
+        if (skipScroll!=2 && smoothScroll) {
             smoothScrollTo(destX, 0, velocity);
             if (dispatchSelected) {
                 dispatchOnPageSelected(item);
@@ -1095,7 +1103,7 @@ public class ViewPager extends ViewGroup {
     void populate(int newCurrentItem) {
         ItemInfo oldCurInfo = null;
         if (mCurItem != newCurrentItem) {
-            oldCurInfo = infoForPosition(mCurItem);
+			oldCurInfo = infoForPosition(mCurItem);
             mCurItem = newCurrentItem;
         }
 
@@ -2019,276 +2027,288 @@ public class ViewPager extends ViewGroup {
             getChildAt(i).setLayerType(layerType, null);
         }
     }
-
-    @Override
-    public boolean onInterceptTouchEvent(MotionEvent ev) {
-        /*
-         * This method JUST determines whether we want to intercept the motion.
-         * If we return true, onMotionEvent will be called and we do the actual
-         * scrolling there.
-         */
-
-        final int action = ev.getAction() & MotionEvent.ACTION_MASK;
-
-        // Always take care of the touch gesture being complete.
-        if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_UP) {
-            // Release the drag.
-            if (DEBUG) Log.v(TAG, "Intercept done!");
-            resetTouch();
-            return false;
-        }
-
-        // Nothing more to do here if we have decided whether or not we
-        // are dragging.
-        if (action != MotionEvent.ACTION_DOWN) {
-            if (mIsBeingDragged) {
-                if (DEBUG) Log.v(TAG, "Intercept returning true!");
-                return true;
-            }
-            if (mIsUnableToDrag) {
-                if (DEBUG) Log.v(TAG, "Intercept returning false!");
-                return false;
-            }
-        }
-
-        switch (action) {
-            case MotionEvent.ACTION_MOVE: {
-                /*
-                 * mIsBeingDragged == false, otherwise the shortcut would have caught it. Check
-                 * whether the user has moved far enough from his original down touch.
-                 */
-
-                /*
-                * Locally do absolute value. mLastMotionY is set to the y value
-                * of the down event.
-                */
-                final int activePointerId = mActivePointerId;
-                if (activePointerId == INVALID_POINTER) {
-                    // If we don't have a valid id, the touch down wasn't on content.
-                    break;
-                }
-
-                final int pointerIndex = ev.findPointerIndex(activePointerId);
-                final float x = ev.getX(pointerIndex);
-                final float dx = x - mLastMotionX;
-                final float xDiff = Math.abs(dx);
-                final float y = ev.getY(pointerIndex);
-                final float yDiff = Math.abs(y - mInitialMotionY);
-                if (DEBUG) Log.v(TAG, "Moved x to " + x + "," + y + " diff=" + xDiff + "," + yDiff);
-
-                if (dx != 0 && !isGutterDrag(mLastMotionX, dx)
-                        && canScroll(this, false, (int) dx, (int) x, (int) y)) {
-                    // Nested view has scrollable area under this point. Let it be handled there.
-                    mLastMotionX = x;
-                    mLastMotionY = y;
-                    mIsUnableToDrag = true;
-                    return false;
-                }
-                if (xDiff > mTouchSlop && xDiff * 0.5f > yDiff) {
-                    if (DEBUG) Log.v(TAG, "Starting drag!");
-                    mIsBeingDragged = true;
-                    requestParentDisallowInterceptTouchEvent(true);
-                    setScrollState(SCROLL_STATE_DRAGGING);
-                    mLastMotionX = dx > 0
-                            ? mInitialMotionX + mTouchSlop : mInitialMotionX - mTouchSlop;
-                    mLastMotionY = y;
-                    setScrollingCacheEnabled(true);
-                } else if (yDiff > mTouchSlop) {
-                    // The finger has moved enough in the vertical
-                    // direction to be counted as a drag...  abort
-                    // any attempt to drag horizontally, to work correctly
-                    // with children that have scrolling containers.
-                    if (DEBUG) Log.v(TAG, "Starting unable to drag!");
-                    mIsUnableToDrag = true;
-                }
-                if (mIsBeingDragged) {
-                    // Scroll to follow the motion event
-                    if (performDrag(x)) {
-                        ViewCompat.postInvalidateOnAnimation(this);
-                    }
-                }
-                break;
-            }
-
-            case MotionEvent.ACTION_DOWN: {
-                /*
-                 * Remember location of down touch.
-                 * ACTION_DOWN always refers to pointer index 0.
-                 */
-                mLastMotionX = mInitialMotionX = ev.getX();
-                mLastMotionY = mInitialMotionY = ev.getY();
-                mActivePointerId = ev.getPointerId(0);
-                mIsUnableToDrag = false;
-
-                mIsScrollStarted = true;
-                mScroller.computeScrollOffset();
-                if (mScrollState == SCROLL_STATE_SETTLING
-                        && Math.abs(mScroller.getFinalX() - mScroller.getCurrX()) > mCloseEnough) {
-                    // Let the user 'catch' the pager as it animates.
-                    mScroller.abortAnimation();
-                    mPopulatePending = false;
-                    populate();
-                    mIsBeingDragged = true;
-                    requestParentDisallowInterceptTouchEvent(true);
-                    setScrollState(SCROLL_STATE_DRAGGING);
-                } else {
-                    completeScroll(false);
-                    mIsBeingDragged = false;
-                }
-
-                if (DEBUG) {
-                    Log.v(TAG, "Down at " + mLastMotionX + "," + mLastMotionY
-                            + " mIsBeingDragged=" + mIsBeingDragged
-                            + "mIsUnableToDrag=" + mIsUnableToDrag);
-                }
-                break;
-            }
-
-            case MotionEvent.ACTION_POINTER_UP:
-                onSecondaryPointerUp(ev);
-                break;
-        }
-
-        if (mVelocityTracker == null) {
-            mVelocityTracker = VelocityTracker.obtain();
-        }
-        mVelocityTracker.addMovement(ev);
-
-        /*
-         * The only time we want to intercept motion events is if we are in the
-         * drag mode.
-         */
-        return mIsBeingDragged;
-    }
-
-    @Override
-    public boolean onTouchEvent(MotionEvent ev) {
-        if (mFakeDragging) {
-            // A fake drag is in progress already, ignore this real one
-            // but still eat the touch events.
-            // (It is likely that the user is multi-touching the screen.)
-            return true;
-        }
-
-        if (ev.getAction() == MotionEvent.ACTION_DOWN && ev.getEdgeFlags() != 0) {
-            // Don't handle edge touches immediately -- they may actually belong to one of our
-            // descendants.
-            return false;
-        }
-
-        if (mAdapter == null || mAdapter.getCount() == 0) {
-            // Nothing to present or scroll; nothing to touch.
-            return false;
-        }
-
-        if (mVelocityTracker == null) {
-            mVelocityTracker = VelocityTracker.obtain();
-        }
-        mVelocityTracker.addMovement(ev);
-
-        final int action = ev.getAction();
-        boolean needsInvalidate = false;
-
-        switch (action & MotionEvent.ACTION_MASK) {
-            case MotionEvent.ACTION_DOWN: {
-                mScroller.abortAnimation();
-                mPopulatePending = false;
-                populate();
-
-                // Remember where the motion event started
-                mLastMotionX = mInitialMotionX = ev.getX();
-                mLastMotionY = mInitialMotionY = ev.getY();
-                mActivePointerId = ev.getPointerId(0);
-                break;
-            }
-            case MotionEvent.ACTION_MOVE:
-                if (!mIsBeingDragged) {
-                    final int pointerIndex = ev.findPointerIndex(mActivePointerId);
-                    if (pointerIndex == -1) {
-                        // A child has consumed some touch events and put us into an inconsistent
-                        // state.
-                        needsInvalidate = resetTouch();
-                        break;
-                    }
-                    final float x = ev.getX(pointerIndex);
-                    final float xDiff = Math.abs(x - mLastMotionX);
-                    final float y = ev.getY(pointerIndex);
-                    final float yDiff = Math.abs(y - mLastMotionY);
-                    if (DEBUG) {
-                        Log.v(TAG, "Moved x to " + x + "," + y + " diff=" + xDiff + "," + yDiff);
-                    }
-                    if (xDiff > mTouchSlop && xDiff > yDiff) {
-                        if (DEBUG) Log.v(TAG, "Starting drag!");
-                        mIsBeingDragged = true;
-                        requestParentDisallowInterceptTouchEvent(true);
-                        mLastMotionX = x - mInitialMotionX > 0 ? mInitialMotionX + mTouchSlop :
-                                mInitialMotionX - mTouchSlop;
-                        mLastMotionY = y;
-                        setScrollState(SCROLL_STATE_DRAGGING);
-                        setScrollingCacheEnabled(true);
-
-                        // Disallow Parent Intercept, just in case
-                        ViewParent parent = getParent();
-                        if (parent != null) {
-                            parent.requestDisallowInterceptTouchEvent(true);
-                        }
-                    }
-                }
-                // Not else! Note that mIsBeingDragged can be set above.
-                if (mIsBeingDragged) {
-                    // Scroll to follow the motion event
-                    final int activePointerIndex = ev.findPointerIndex(mActivePointerId);
-                    final float x = ev.getX(activePointerIndex);
-                    needsInvalidate |= performDrag(x);
-                }
-                break;
-            case MotionEvent.ACTION_UP:
-                if (mIsBeingDragged) {
-                    final VelocityTracker velocityTracker = mVelocityTracker;
-                    velocityTracker.computeCurrentVelocity(1000, mMaximumVelocity);
-                    int initialVelocity = (int) velocityTracker.getXVelocity(mActivePointerId);
-                    mPopulatePending = true;
-                    final int width = getClientWidth();
-                    final int scrollX = getScrollX();
-                    final ItemInfo ii = infoForCurrentScrollPosition();
-                    final float marginOffset = (float) mPageMargin / width;
-                    final int currentPage = ii.position;
-                    final float pageOffset = (((float) scrollX / width) - ii.offset)
-                            / (ii.widthFactor + marginOffset);
-                    final int activePointerIndex = ev.findPointerIndex(mActivePointerId);
-                    final float x = ev.getX(activePointerIndex);
-                    final int totalDelta = (int) (x - mInitialMotionX);
-                    int nextPage = determineTargetPage(currentPage, pageOffset, initialVelocity,
-                            totalDelta);
-                    setCurrentItemInternal(nextPage, true, true, initialVelocity);
-
-                    needsInvalidate = resetTouch();
-                }
-                break;
-            case MotionEvent.ACTION_CANCEL:
-                if (mIsBeingDragged) {
-                    scrollToItem(mCurItem, true, 0, false);
-                    needsInvalidate = resetTouch();
-                }
-                break;
-            case MotionEvent.ACTION_POINTER_DOWN: {
-                final int index = ev.getActionIndex();
-                final float x = ev.getX(index);
-                mLastMotionX = x;
-                mActivePointerId = ev.getPointerId(index);
-                break;
-            }
-            case MotionEvent.ACTION_POINTER_UP:
-                onSecondaryPointerUp(ev);
-                mLastMotionX = ev.getX(ev.findPointerIndex(mActivePointerId));
-                break;
-        }
-        if (needsInvalidate) {
-            ViewCompat.postInvalidateOnAnimation(this);
-        }
-        return true;
-    }
-
+	
+	public float lastX;
+	public float lastY;
+ 
+	@Override
+	public boolean dispatchTouchEvent(MotionEvent ev) {
+		lastX = ev.getX();
+		lastY = ev.getY();
+		
+		return super.dispatchTouchEvent(ev);
+	}
+	
+	
+	@Override
+	public boolean onInterceptTouchEvent(MotionEvent ev) {
+		/*
+		 * This method JUST determines whether we want to intercept the motion.
+		 * If we return true, onMotionEvent will be called and we do the actual
+		 * scrolling there.
+		 */
+		
+		final int action = ev.getAction() & MotionEvent.ACTION_MASK;
+		
+		// Always take care of the touch gesture being complete.
+		if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_UP) {
+			// Release the drag.
+			if (DEBUG) Log.v(TAG, "Intercept done!");
+			resetTouch();
+			return false;
+		}
+		
+		// Nothing more to do here if we have decided whether or not we
+		// are dragging.
+		if (action != MotionEvent.ACTION_DOWN) {
+			if (mIsBeingDragged) {
+				if (DEBUG) Log.v(TAG, "Intercept returning true!");
+				return true;
+			}
+			if (mIsUnableToDrag) {
+				if (DEBUG) Log.v(TAG, "Intercept returning false!");
+				return false;
+			}
+		}
+		
+		switch (action) {
+			case MotionEvent.ACTION_MOVE: {
+				/*
+				 * mIsBeingDragged == false, otherwise the shortcut would have caught it. Check
+				 * whether the user has moved far enough from his original down touch.
+				 */
+				
+				/*
+				 * Locally do absolute value. mLastMotionY is set to the y value
+				 * of the down event.
+				 */
+				final int activePointerId = mActivePointerId;
+				if (activePointerId == INVALID_POINTER) {
+					// If we don't have a valid id, the touch down wasn't on content.
+					break;
+				}
+				
+				final int pointerIndex = ev.findPointerIndex(activePointerId);
+				final float x = ev.getX(pointerIndex);
+				final float dx = x - mLastMotionX;
+				final float xDiff = Math.abs(dx);
+				final float y = ev.getY(pointerIndex);
+				final float yDiff = Math.abs(y - mInitialMotionY);
+				if (DEBUG) Log.v(TAG, "Moved x to " + x + "," + y + " diff=" + xDiff + "," + yDiff);
+				
+				if (dx != 0 && !isGutterDrag(mLastMotionX, dx)
+						&& canScroll(this, false, (int) dx, (int) x, (int) y)) {
+					// Nested view has scrollable area under this point. Let it be handled there.
+					mLastMotionX = x;
+					mLastMotionY = y;
+					mIsUnableToDrag = true;
+					return false;
+				}
+				if (xDiff > mTouchSlop && xDiff * 0.5f > yDiff) {
+					if (DEBUG) Log.v(TAG, "Starting drag!");
+					mIsBeingDragged = true;
+					requestParentDisallowInterceptTouchEvent(true);
+					setScrollState(SCROLL_STATE_DRAGGING);
+					mLastMotionX = dx > 0
+							? mInitialMotionX + mTouchSlop : mInitialMotionX - mTouchSlop;
+					mLastMotionY = y;
+					setScrollingCacheEnabled(true);
+				} else if (yDiff > mTouchSlop) {
+					// The finger has moved enough in the vertical
+					// direction to be counted as a drag...  abort
+					// any attempt to drag horizontally, to work correctly
+					// with children that have scrolling containers.
+					if (DEBUG) Log.v(TAG, "Starting unable to drag!");
+					mIsUnableToDrag = true;
+				}
+				if (mIsBeingDragged) {
+					// Scroll to follow the motion event
+					if (performDrag(x)) {
+						ViewCompat.postInvalidateOnAnimation(this);
+					}
+				}
+				break;
+			}
+			
+			case MotionEvent.ACTION_DOWN: {
+				/*
+				 * Remember location of down touch.
+				 * ACTION_DOWN always refers to pointer index 0.
+				 */
+				mLastMotionX = mInitialMotionX = ev.getX();
+				mLastMotionY = mInitialMotionY = ev.getY();
+				mActivePointerId = ev.getPointerId(0);
+				mIsUnableToDrag = false;
+				
+				mIsScrollStarted = true;
+				mScroller.computeScrollOffset();
+				if (mScrollState == SCROLL_STATE_SETTLING
+						&& Math.abs(mScroller.getFinalX() - mScroller.getCurrX()) > mCloseEnough) {
+					// Let the user 'catch' the pager as it animates.
+					mScroller.abortAnimation();
+					mPopulatePending = false;
+					populate();
+					mIsBeingDragged = true;
+					requestParentDisallowInterceptTouchEvent(true);
+					setScrollState(SCROLL_STATE_DRAGGING);
+				} else {
+					completeScroll(false);
+					mIsBeingDragged = false;
+				}
+				
+				if (DEBUG) {
+					Log.v(TAG, "Down at " + mLastMotionX + "," + mLastMotionY
+							+ " mIsBeingDragged=" + mIsBeingDragged
+							+ "mIsUnableToDrag=" + mIsUnableToDrag);
+				}
+				break;
+			}
+			
+			case MotionEvent.ACTION_POINTER_UP:
+				onSecondaryPointerUp(ev);
+				break;
+		}
+		
+		if (mVelocityTracker == null) {
+			mVelocityTracker = VelocityTracker.obtain();
+		}
+		mVelocityTracker.addMovement(ev);
+		
+		/*
+		 * The only time we want to intercept motion events is if we are in the
+		 * drag mode.
+		 */
+		return mIsBeingDragged;
+	}
+	
+	@Override
+	public boolean onTouchEvent(MotionEvent ev) {
+		if (mFakeDragging) {
+			// A fake drag is in progress already, ignore this real one
+			// but still eat the touch events.
+			// (It is likely that the user is multi-touching the screen.)
+			return true;
+		}
+		
+		if (ev.getAction() == MotionEvent.ACTION_DOWN && ev.getEdgeFlags() != 0) {
+			// Don't handle edge touches immediately -- they may actually belong to one of our
+			// descendants.
+			return false;
+		}
+		
+		if (mAdapter == null || mAdapter.getCount() == 0) {
+			// Nothing to present or scroll; nothing to touch.
+			return false;
+		}
+		
+		if (mVelocityTracker == null) {
+			mVelocityTracker = VelocityTracker.obtain();
+		}
+		mVelocityTracker.addMovement(ev);
+		
+		final int action = ev.getAction();
+		boolean needsInvalidate = false;
+		
+		switch (action & MotionEvent.ACTION_MASK) {
+			case MotionEvent.ACTION_DOWN: {
+				mScroller.abortAnimation();
+				mPopulatePending = false;
+				populate();
+				
+				// Remember where the motion event started
+				mLastMotionX = mInitialMotionX = ev.getX();
+				mLastMotionY = mInitialMotionY = ev.getY();
+				mActivePointerId = ev.getPointerId(0);
+				break;
+			}
+			case MotionEvent.ACTION_MOVE:
+				if (!mIsBeingDragged) {
+					final int pointerIndex = ev.findPointerIndex(mActivePointerId);
+					if (pointerIndex == -1) {
+						// A child has consumed some touch events and put us into an inconsistent
+						// state.
+						needsInvalidate = resetTouch();
+						break;
+					}
+					final float x = ev.getX(pointerIndex);
+					final float xDiff = Math.abs(x - mLastMotionX);
+					final float y = ev.getY(pointerIndex);
+					final float yDiff = Math.abs(y - mLastMotionY);
+					if (DEBUG) {
+						Log.v(TAG, "Moved x to " + x + "," + y + " diff=" + xDiff + "," + yDiff);
+					}
+					if (xDiff > mTouchSlop && xDiff > yDiff) {
+						if (DEBUG) Log.v(TAG, "Starting drag!");
+						mIsBeingDragged = true;
+						requestParentDisallowInterceptTouchEvent(true);
+						mLastMotionX = x - mInitialMotionX > 0 ? mInitialMotionX + mTouchSlop :
+								mInitialMotionX - mTouchSlop;
+						mLastMotionY = y;
+						setScrollState(SCROLL_STATE_DRAGGING);
+						setScrollingCacheEnabled(true);
+						
+						// Disallow Parent Intercept, just in case
+						ViewParent parent = getParent();
+						if (parent != null) {
+							parent.requestDisallowInterceptTouchEvent(true);
+						}
+					}
+				}
+				// Not else! Note that mIsBeingDragged can be set above.
+				if (mIsBeingDragged) {
+					// Scroll to follow the motion event
+					final int activePointerIndex = ev.findPointerIndex(mActivePointerId);
+					final float x = ev.getX(activePointerIndex);
+					needsInvalidate |= performDrag(x);
+				}
+				break;
+			case MotionEvent.ACTION_UP:
+				if (mIsBeingDragged) {
+					final VelocityTracker velocityTracker = mVelocityTracker;
+					velocityTracker.computeCurrentVelocity(1000, mMaximumVelocity);
+					int initialVelocity = (int) velocityTracker.getXVelocity(mActivePointerId);
+					mPopulatePending = true;
+					final int width = getClientWidth();
+					final int scrollX = getScrollX();
+					final ItemInfo ii = infoForCurrentScrollPosition();
+					final float marginOffset = (float) mPageMargin / width;
+					final int currentPage = ii.position;
+					final float pageOffset = (((float) scrollX / width) - ii.offset)
+							/ (ii.widthFactor + marginOffset);
+					final int activePointerIndex = ev.findPointerIndex(mActivePointerId);
+					final float x = ev.getX(activePointerIndex);
+					final int totalDelta = (int) (x - mInitialMotionX);
+					int nextPage = determineTargetPage(currentPage, pageOffset, initialVelocity,
+							totalDelta);
+					setCurrentItemInternal(nextPage, true, true, initialVelocity);
+					
+					needsInvalidate = resetTouch();
+				}
+				break;
+			case MotionEvent.ACTION_CANCEL:
+				if (mIsBeingDragged) {
+					scrollToItem(mCurItem, true, 0, false);
+					needsInvalidate = resetTouch();
+				}
+				break;
+			case MotionEvent.ACTION_POINTER_DOWN: {
+				final int index = ev.getActionIndex();
+				final float x = ev.getX(index);
+				mLastMotionX = x;
+				mActivePointerId = ev.getPointerId(index);
+				break;
+			}
+			case MotionEvent.ACTION_POINTER_UP:
+				onSecondaryPointerUp(ev);
+				mLastMotionX = ev.getX(ev.findPointerIndex(mActivePointerId));
+				break;
+		}
+		if (needsInvalidate) {
+			ViewCompat.postInvalidateOnAnimation(this);
+		}
+		return true;
+	}
+	
     private boolean resetTouch() {
         boolean needsInvalidate;
         mActivePointerId = INVALID_POINTER;
@@ -2298,64 +2318,64 @@ public class ViewPager extends ViewGroup {
         needsInvalidate = mLeftEdge.isFinished() || mRightEdge.isFinished();
         return needsInvalidate;
     }
-
-    private void requestParentDisallowInterceptTouchEvent(boolean disallowIntercept) {
-        final ViewParent parent = getParent();
-        if (parent != null) {
-            parent.requestDisallowInterceptTouchEvent(disallowIntercept);
-        }
-    }
-
-    private boolean performDrag(float x) {
-        boolean needsInvalidate = false;
-
-        final float deltaX = mLastMotionX - x;
-        mLastMotionX = x;
-
-        float oldScrollX = getScrollX();
-        float scrollX = oldScrollX + deltaX;
-        final int width = getClientWidth();
-
-        float leftBound = width * mFirstOffset;
-        float rightBound = width * mLastOffset;
-        boolean leftAbsolute = true;
-        boolean rightAbsolute = true;
-
-        final ItemInfo firstItem = mItems.get(0);
-        final ItemInfo lastItem = mItems.get(mItems.size() - 1);
-        if (firstItem.position != 0) {
-            leftAbsolute = false;
-            leftBound = firstItem.offset * width;
-        }
-        if (lastItem.position != mAdapter.getCount() - 1) {
-            rightAbsolute = false;
-            rightBound = lastItem.offset * width;
-        }
-
-        if (scrollX < leftBound) {
-            if (leftAbsolute) {
-                float over = leftBound - scrollX;
-                mLeftEdge.onPull(Math.abs(over) / width);
-                needsInvalidate = true;
-            }
-            scrollX = leftBound;
-        } else if (scrollX > rightBound) {
-            if (rightAbsolute) {
-                float over = scrollX - rightBound;
-                mRightEdge.onPull(Math.abs(over) / width);
-                needsInvalidate = true;
-            }
-            scrollX = rightBound;
-        }
-        // Don't lose the rounded component
-        mLastMotionX += scrollX - (int) scrollX;
-        scrollTo((int) scrollX, getScrollY());
-        pageScrolled((int) scrollX);
-
-        return needsInvalidate;
-    }
-
-    /**
+	
+	private void requestParentDisallowInterceptTouchEvent(boolean disallowIntercept) {
+		final ViewParent parent = getParent();
+		if (parent != null) {
+			parent.requestDisallowInterceptTouchEvent(disallowIntercept);
+		}
+	}
+	
+	private boolean performDrag(float x) {
+		boolean needsInvalidate = false;
+		
+		final float deltaX = mLastMotionX - x;
+		mLastMotionX = x;
+		
+		float oldScrollX = getScrollX();
+		float scrollX = oldScrollX + deltaX;
+		final int width = getClientWidth();
+		
+		float leftBound = width * mFirstOffset;
+		float rightBound = width * mLastOffset;
+		boolean leftAbsolute = true;
+		boolean rightAbsolute = true;
+		
+		final ItemInfo firstItem = mItems.get(0);
+		final ItemInfo lastItem = mItems.get(mItems.size() - 1);
+		if (firstItem.position != 0) {
+			leftAbsolute = false;
+			leftBound = firstItem.offset * width;
+		}
+		if (lastItem.position != mAdapter.getCount() - 1) {
+			rightAbsolute = false;
+			rightBound = lastItem.offset * width;
+		}
+		
+		if (scrollX < leftBound) {
+			if (leftAbsolute) {
+				float over = leftBound - scrollX;
+				mLeftEdge.onPull(Math.abs(over) / width);
+				needsInvalidate = true;
+			}
+			scrollX = leftBound;
+		} else if (scrollX > rightBound) {
+			if (rightAbsolute) {
+				float over = scrollX - rightBound;
+				mRightEdge.onPull(Math.abs(over) / width);
+				needsInvalidate = true;
+			}
+			scrollX = rightBound;
+		}
+		// Don't lose the rounded component
+		mLastMotionX += scrollX - (int) scrollX;
+		scrollTo((int) scrollX, getScrollY());
+		pageScrolled((int) scrollX);
+		
+		return needsInvalidate;
+	}
+	
+	/**
      * @return Info about the page at the current scroll position.
      *         This can be synthetic for a missing middle page; the 'object' field can be null.
      */
@@ -2513,7 +2533,7 @@ public class ViewPager extends ViewGroup {
      * <p>A fake drag can be useful if you want to synchronize the motion of the ViewPager
      * with the touch scrolling of another view, while still letting the ViewPager
      * control the snapping motion and fling behavior. (e.g. parallax-scrolling tabs.)
-     * Call {@link #fakeDragBy(float)} to simulate the actual drag motion. Call
+     * Call {@link #fakeDragBy(float, boolean)} to simulate the actual drag motion. Call
      * {@link #endFakeDrag()} to complete the fake drag and fling as necessary.
      *
      * <p>During a fake drag the ViewPager will ignore all touch events. If a real drag
@@ -2521,22 +2541,25 @@ public class ViewPager extends ViewGroup {
      *
      * @return true if the fake drag began successfully, false if it could not be started.
      *
-     * @see #fakeDragBy(float)
+     * @see #fakeDragBy(float, boolean)
      * @see #endFakeDrag()
      */
+    float fakeScrollStart;
+    
     public boolean beginFakeDrag() {
         if (mIsBeingDragged) {
             return false;
         }
         mFakeDragging = true;
         setScrollState(SCROLL_STATE_DRAGGING);
+		fakeScrollStart = getScrollX();
         mInitialMotionX = mLastMotionX = 0;
         if (mVelocityTracker == null) {
             mVelocityTracker = VelocityTracker.obtain();
         } else {
             mVelocityTracker.clear();
         }
-        final long time = SystemClock.uptimeMillis();
+        final long time = SystemClock.uptimeMillis()-10;
         final MotionEvent ev = MotionEvent.obtain(time, time, MotionEvent.ACTION_DOWN, 0, 0, 0);
         mVelocityTracker.addMovement(ev);
         ev.recycle();
@@ -2548,7 +2571,7 @@ public class ViewPager extends ViewGroup {
      * End a fake drag of the pager.
      *
      * @see #beginFakeDrag()
-     * @see #fakeDragBy(float)
+     * @see #fakeDragBy(float, boolean)
      */
     public void endFakeDrag() {
         if (!mFakeDragging) {
@@ -2564,9 +2587,10 @@ public class ViewPager extends ViewGroup {
             final int scrollX = getScrollX();
             final ItemInfo ii = infoForCurrentScrollPosition();
             final int currentPage = ii.position;
-            final float pageOffset = (((float) scrollX / width) - ii.offset) / ii.widthFactor;
+			android.util.Log.d("fatal initialVelocity", skipScroll+" vel:"+initialVelocity+" currentPage:"+currentPage+" mCurItem:"+mCurItem);
+            final float pageOffset = skipScroll>=1?0:(((float) scrollX / width) - ii.offset) / ii.widthFactor;
             final int totalDelta = (int) (mLastMotionX - mInitialMotionX);
-            int nextPage = determineTargetPage(currentPage, pageOffset, initialVelocity,
+            int nextPage = skipScroll>=1?mCurItem:determineTargetPage(currentPage, pageOffset, initialVelocity,
                     totalDelta);
             setCurrentItemInternal(nextPage, true, true, initialVelocity);
         }
@@ -2579,14 +2603,14 @@ public class ViewPager extends ViewGroup {
      * Fake drag by an offset in pixels. You must have called {@link #beginFakeDrag()} first.
      *
      * @param xOffset Offset in pixels to drag by.
-     * @see #beginFakeDrag()
+     * @param addVel
+	 * @see #beginFakeDrag()
      * @see #endFakeDrag()
      */
-    public void fakeDragBy(float xOffset) {
-        if (!mFakeDragging) {
-            throw new IllegalStateException("No fake drag in progress. Call beginFakeDrag first.");
-        }
-
+    public void fakeDragBy(float xOffset, boolean addVel) {
+//        if (!mFakeDragging) {
+//            throw new IllegalStateException("No fake drag in progress. Call beginFakeDrag first.");
+//        }
         if (mAdapter == null) {
             return;
         }
@@ -2594,7 +2618,8 @@ public class ViewPager extends ViewGroup {
         mLastMotionX += xOffset;
 
         float oldScrollX = getScrollX();
-        float scrollX = oldScrollX - xOffset;
+        //float scrollX = oldScrollX - xOffset;
+        float scrollX = fakeScrollStart - mLastMotionX;
         final int width = getClientWidth();
 
         float leftBound = width * mFirstOffset;
@@ -2608,23 +2633,26 @@ public class ViewPager extends ViewGroup {
         if (lastItem.position != mAdapter.getCount() - 1) {
             rightBound = lastItem.offset * width;
         }
-
         if (scrollX < leftBound) {
             scrollX = leftBound;
         } else if (scrollX > rightBound) {
             scrollX = rightBound;
         }
         // Don't lose the rounded component
-        mLastMotionX += scrollX - (int) scrollX;
+        //mLastMotionX += scrollX - (int) scrollX;
         scrollTo((int) scrollX, getScrollY());
         pageScrolled((int) scrollX);
-
+	
+	
+		//android.util.Log.d("fatal fakeDragBy", getScrollX()+" offset:"+xOffset+" scrollX:"+scrollX+" fakeScrollStart:"+fakeScrollStart+" mLastMotionX:"+mLastMotionX);
         // Synthesize an event for the VelocityTracker.
-        final long time = SystemClock.uptimeMillis();
-        final MotionEvent ev = MotionEvent.obtain(mFakeDragBeginTime, time, MotionEvent.ACTION_MOVE,
-                mLastMotionX, 0, 0);
-        mVelocityTracker.addMovement(ev);
-        ev.recycle();
+		if(addVel){
+			final long time = SystemClock.uptimeMillis()+10;
+			final MotionEvent ev = MotionEvent.obtain(mFakeDragBeginTime, time, MotionEvent.ACTION_MOVE,
+					mLastMotionX, 0, 0);
+			mVelocityTracker.addMovement(ev);
+			ev.recycle();
+		}
     }
 
     /**
@@ -2633,7 +2661,7 @@ public class ViewPager extends ViewGroup {
      * @return true if currently in a fake drag, false otherwise.
      *
      * @see #beginFakeDrag()
-     * @see #fakeDragBy(float)
+     * @see #fakeDragBy(float, boolean)
      * @see #endFakeDrag()
      */
     public boolean isFakeDragging() {
