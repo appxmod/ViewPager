@@ -4,7 +4,7 @@ apply plugin: 'com.android.library'
 android {
 
     defaultConfig {
-        compileSdkVersion ver_compileSdkVersion as int
+        compileSdkVersion ver_compileSdkVersion
         targetSdkVersion ver_aimsdk
         minSdkVersion ver_minsdk
         vectorDrawables.useSupportLibrary = true
@@ -24,13 +24,20 @@ android {
         }
     }
 
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
 
+    lintOptions {
+        abortOnError false
+    }
 }
 
 
 dependencies {
     //api libs_anno
-    api project(":AxtCore")
+    api libs_core
     api ('androidx.customview:customview:1.0.0'){
         exclude module:"core"
     }
