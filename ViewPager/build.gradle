@@ -1,0 +1,59 @@
+apply plugin: 'com.android.library'
+
+
+android {
+
+    defaultConfig {
+        compileSdkVersion ver_compileSdkVersion
+        targetSdkVersion ver_aimsdk
+        minSdkVersion ver_minsdk
+        vectorDrawables.useSupportLibrary = true
+
+    }
+
+
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lintOptions {
+        abortOnError false
+    }
+}
+
+
+dependencies {
+    //api libs_anno
+    api libs_core
+    api ('androidx.customview:customview:1.0.0'){
+        exclude module:"core"
+    }
+}
+
+apply plugin: 'maven-publish'
+afterEvaluate {
+    publishing {
+        publications {
+            mavenAll(MavenPublication) {
+                from components.release
+                groupId "org.appxmod.android"
+                artifactId "ViewPager"
+                version "1.0.0"
+            }
+        }
+    }
+}
+build.finalizedBy publishToMavenLocal
